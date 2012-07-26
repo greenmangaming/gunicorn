@@ -41,10 +41,8 @@ class FileWrapper:
         raise IndexError
 
 
-def create(req, sock, client, server, cfg):
-    resp = Response(req, sock)
-
-    environ = {
+def default_environ(req, sock, cfg):
+    return {
         "wsgi.input": req.body,
         "wsgi.errors": sys.stderr,
         "wsgi.version": (1, 0),
@@ -59,6 +57,12 @@ def create(req, sock, client, server, cfg):
         "RAW_URI": req.uri,
         "SERVER_PROTOCOL": "HTTP/%s" % ".".join(map(str, req.version))
     }
+
+
+def create(req, sock, client, server, cfg):
+    resp = Response(req, sock)
+
+    environ = default_environ(req, sock, cfg)
 
     # authors should be aware that REMOTE_HOST and REMOTE_ADDR
     # may not qualify the remote addr:
@@ -202,6 +206,9 @@ class Response(object):
                     # handle websocket
                     if value.lower().strip() == "upgrade":
                         self.upgrade = True
+                elif lname == "upgrade":
+                    if value.lower().strip() == "websocket":
+                        self.headers.append((name.strip(), str(value).strip()))
 
                 # ignore hopbyhop headers
                 continue

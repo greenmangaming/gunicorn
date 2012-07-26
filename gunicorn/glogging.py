@@ -107,9 +107,7 @@ class Logger(object):
             if cfg.errorlog != "-":
                 # if an error log file is set redirect stdout & stderr to
                 # this log file.
-                stdout_log = LazyWriter(cfg.errorlog, 'a')
-                sys.stdout = stdout_log
-                sys.stderr = stdout_log
+                sys.stdout = sys.stderr = LazyWriter(cfg.errorlog, 'a')
 
             # set gunicorn.error handler
             self._set_handler(self.error_log, cfg.errorlog,
@@ -159,7 +157,7 @@ class Logger(object):
 
         status = resp.status.split(None, 1)[0]
         atoms = {
-                'h': environ['REMOTE_ADDR'],
+                'h': environ.get('REMOTE_ADDR', '-'),
                 'l': '-',
                 'u': '-', # would be cool to get username from basic auth header
                 't': self.now(),
@@ -175,7 +173,12 @@ class Logger(object):
                 }
 
         # add request headers
-        atoms.update(dict([("{%s}i" % k.lower(),v) for k, v in req.headers]))
+        if hasattr(req, 'headers'):
+            req_headers = req.headers
+        else:
+            req_headers = req
+
+        atoms.update(dict([("{%s}i" % k.lower(),v) for k, v in req_headers]))
 
         # add response headers
         atoms.update(dict([("{%s}o" % k.lower(),v) for k, v in resp.headers]))
@@ -203,18 +206,24 @@ class Logger(object):
             for handler in log.handlers:
                 if isinstance(handler, logging.FileHandler):
                     handler.acquire()
-                    handler.stream.close()
-                    handler.stream = open(handler.baseFilename,
-                            handler.mode)
-                    handler.release()
+                    try:
+                        if handler.stream:
+                            handler.stream.close()
+                            handler.stream = open(handler.baseFilename,
+                                    handler.mode)
+                    finally:
+                        handler.release()
 
     def close_on_exec(self):
         for log in (self.error_log, self.access_log):
             for handler in log.handlers:
                 if isinstance(handler, logging.FileHandler):
                     handler.acquire()
-                    util.close_on_exec(handler.stream.fileno())
-                    handler.release()
+                    try:
+                        if handler.stream:
+                            util.close_on_exec(handler.stream.fileno())
+                    finally:
+                        handler.release()
 
 
     def _get_gunicorn_handler(self, log):

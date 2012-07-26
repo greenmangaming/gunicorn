@@ -62,10 +62,12 @@ class GeventWorker(AsyncWorker):
             server = StreamServer(self.socket, handle=self.handle, spawn=pool)
 
         server.start()
+        pid = os.getpid()
         try:
             while self.alive:
                 self.notify()
-                if self.ppid != os.getppid():
+
+                if  pid == os.getpid() and self.ppid != os.getppid():
                     self.log.info("Parent changed, shutting down: %s", self)
                     break
 
@@ -77,7 +79,7 @@ class GeventWorker(AsyncWorker):
         try:
             # Try to stop connections until timeout
             self.notify()
-            server.stop(timeout=self.timeout)
+            server.stop(timeout=self.cfg.graceful_timeout)
         except:
             pass
 
@@ -87,14 +89,28 @@ class GeventWorker(AsyncWorker):
         except gevent.GreenletExit:
             pass
 
-    if hasattr(gevent.core, 'dns_shutdown'):
+    if gevent.version_info[0] == 0:
 
         def init_process(self):
             #gevent 0.13 and older doesn't reinitialize dns for us after forking
             #here's the workaround
+            import gevent.core
             gevent.core.dns_shutdown(fail_requests=1)
             gevent.core.dns_init()
             super(GeventWorker, self).init_process()
+
+
+class GeventResponse(object):
+
+    status = None
+    headers = None
+    response_length = None
+
+
+    def __init__(self, status, headers, clength):
+        self.status = status
+        self.headers = headers
+        self.response_length = clength
 
 class PyWSGIHandler(pywsgi.WSGIHandler):
 
@@ -102,7 +118,10 @@ class PyWSGIHandler(pywsgi.WSGIHandler):
         start = datetime.fromtimestamp(self.time_start)
         finish = datetime.fromtimestamp(self.time_finish)
         response_time = finish - start
-        self.server.log.access(self, self.environ, response_time)
+        resp = GeventResponse(self.status, self.response_headers,
+                self.response_length)
+        req_headers = [h.split(":", 1) for h in self.headers.headers]
+        self.server.log.access(resp, req_headers, self.environ, response_time)
 
     def get_environ(self):
         env = super(PyWSGIHandler, self).get_environ()
